@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileShare - Сервис обмена файлами</title>
+
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 FileShare</h1>
+            <p>Безопасный обмен файлами с временными ссылками</p>
+        </div>
+
+        <div class="auth-section" id="authSection">
+            <div class="auth-form" id="loginForm">
+                <input type="text" id="username" placeholder="Имя пользователя" required>
+                <input type="password" id="password" placeholder="Пароль" required>
+                <button onclick="login()">Войти</button>
+                <button onclick="register()" style="background: #00b894;">Регистрация</button>
+            </div>
+            <div class="user-info" id="userInfo" style="display: none;">
+                <p>Добро пожаловать, <span id="currentUser"></span>! 
+                <button onclick="logout()" style="background: #d63031; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; margin-left: 10px;">Выйти</button></p>
+            </div>
+        </div>
+
+        <div class="upload-section">
+            <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                <div class="upload-icon">📤</div>
+                <div class="upload-text">Нажмите или перетащите файл сюда</div>
+                <div style="color: #999; font-size: 0.9em;">Максимальный размер: 100MB</div>
+            </div>
+            <input type="file" id="fileInput" class="file-input" onchange="handleFile(this.files[0])">
+            
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar" id="progressBar"></div>
+                <div class="progress-text" id="progressText">Загрузка... 0%</div>
+            </div>
+        </div>
+
+        <div class="result-section" id="resultSection">
+            <div class="file-info" id="fileInfo">
+                <div class="file-name" id="fileName"></div>
+                <div class="file-size" id="fileSize"></div>
+            </div>
+            
+            <div class="download-link">
+                <h3>Ссылка для скачивания:</h3>
+                <div class="download-url" id="downloadUrl" onclick="copyToClipboard()"></div>
+                <small style="color: #666;">Ссылка действительна в течение 30 дней с момента последнего скачивания</small>
+            </div>
+        </div>
+
+        <div class="stats-section">
+            <h3>Статистика</h3>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalFiles">-</div>
+                    <div class="stat-label">Загружено файлов</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="totalSize">-</div>
+                    <div class="stat-label">Общий размер</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="totalDownloads">-</div>
+                    <div class="stat-label">Скачиваний</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        let currentUser = null;
+        let authToken = null;
+        document.addEventListener('DOMContentLoaded', () => {
+            setupDragAndDrop();
+            checkAuthToken();
+            loadStats();
+        });
+        function checkAuthToken() {
+            const token = sessionStorage.getItem('authToken');
+            const username = sessionStorage.getItem('username');
+            
+            if (token && username) {
+                authToken = token;
+                currentUser = username;
+                showUserInfo();
+                enableUpload();
+            } else {
+                disableUpload();
+            }
+        }
+        function setupDragAndDrop() {
+            const uploadArea = document.getElementById('uploadArea');
+            
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+            
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+            
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                
+                if (!authToken) {
+                    showError('Для загрузки файлов необходимо войти в систему');
+                    return;
+                }
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFile(files[0]);
+                }
+            });
+        }
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                showError('Заполните все поля');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = username;
+                    sessionStorage.setItem('authToken', authToken);
+                    sessionStorage.setItem('username', username);
+                    showUserInfo();
+                    enableUpload();
+                    showSuccess('Успешный вход в систему');
+                    loadStats();
+                } else {
+                    showError(data.error || 'Ошибка авторизации');
+                }
+            } catch (error) {
+                showError('Ошибка подключения к серверу');
+            }
+        }
+        async function register() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                showError('Заполните все поля');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess('Регистрация успешна! Теперь войдите в систему');
+                } else {
+                    showError(data.error || 'Ошибка регистрации');
+                }
+            } catch (error) {
+                showError('Ошибка подключения к серверу');
+            }
+        }
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            sessionStorage.removeItem('authToken');
+            sessionStorage.removeItem('username');
+            showLoginForm();
+            disableUpload();
+            hideResult();
+        }
+        function showUserInfo() {
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('userInfo').style.display = 'block';
+            document.getElementById('currentUser').textContent = currentUser;
+        }
+        function showLoginForm() {
+            document.getElementById('loginForm').style.display = 'flex';
+            document.getElementById('userInfo').style.display = 'none';
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+        }
+        function enableUpload() {
+            document.getElementById('uploadArea').classList.remove('disabled');
+        }
+        function disableUpload() {
+            document.getElementById('uploadArea').classList.add('disabled');
+        }
+        async function handleFile(file) {
+            if (!file) return;
+            
+            if (!authToken) {
+                showError('Для загрузки файлов необходимо войти в систему');
+                return;
+            }
+            
+            if (file.size > 100 * 1024 * 1024) {
+                showError('Размер файла не должен превышать 100MB');
+                return;
+            }
+            
+            showProgress();
+            hideResult();
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const xhr = new XMLHttpRequest();
+                
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        updateProgress(percentComplete);
+                    }
+                });
+                
+                xhr.onload = function() {
+                    hideProgress();
+                    
+                    if (xhr.status === 200) {
+                        const data = JSON.parse(xhr.responseText);
+                        showResult(file, data.downloadUrl);
+                        loadStats();
+                    } else {
+                        const error = JSON.parse(xhr.responseText);
+                        showError(error.error || 'Ошибка загрузки файла');
+                    }
+                };
+                
+                xhr.onerror = function() {
+                    hideProgress();
+                    showError('Ошибка подключения к серверу');
+                };
+                
+                xhr.open('POST', `${API_BASE}/upload`);
+                xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+                xhr.send(formData);
+                
+            } catch (error) {
+                hideProgress();
+                showError('Ошибка загрузки файла');
+            }
+        }
+        function showProgress() {
+            document.getElementById('progressContainer').style.display = 'block';
+            updateProgress(0);
+        }
+        function updateProgress(percent) {
+            document.getElementById('progressBar').style.width = percent + '%';
+            document.getElementById('progressText').textContent = `Загрузка... ${Math.round(percent)}%`;
+        }
+        function hideProgress() {
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+        function showResult(file, downloadUrl) {
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+            document.getElementById('downloadUrl').textContent = downloadUrl;
+            document.getElementById('resultSection').style.display = 'block';
+        }
+        function hideResult() {
+            document.getElementById('resultSection').style.display = 'none';
+        }
+        function copyToClipboard() {
+            const url = document.getElementById('downloadUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                showSuccess('Ссылка скопирована в буфер обмена');
+            });
+        }
+        async function loadStats() {
+            if (!authToken) {
+                document.getElementById('totalFiles').textContent = '-';
+                document.getElementById('totalSize').textContent = '-';
+                document.getElementById('totalDownloads').textContent = '-';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/stats`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('totalFiles').textContent = data.totalFiles;
+                    document.getElementById('totalSize').textContent = formatFileSize(data.totalSize);
+                    document.getElementById('totalDownloads').textContent = data.totalDownloads;
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки статистики:', error);
+            }
+        }
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        function showError(message) {
+            const existing = document.querySelector('.error');
+            if (existing) existing.remove();
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            document.querySelector('.upload-section').appendChild(errorDiv);
+            
+            setTimeout(() => errorDiv.remove(), 5000);
+        }
+        function showSuccess(message) {
+            const existing = document.querySelector('.success');
+            if (existing) existing.remove();
+            
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.textContent = message;
+            document.querySelector('.upload-section').appendChild(successDiv);
+            
+            setTimeout(() => successDiv.remove(), 3000);
+        }
+    </script>
+</body>
+</html>
